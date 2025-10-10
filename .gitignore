@@ -1,0 +1,19 @@
+# macOS system files
+.DS_Store
+
+# Node / Frontend dependencies
+node_modules/
+dist/
+build/
+
+# JetBrains / VS Code IDE configs
+.idea/
+.vscode/
+*.iml
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Environment variables (if any)
+.env
