@@ -4,12 +4,28 @@ import { Button } from "../ui/Button.js";
 import { createElement } from "../../utils/dom.js";
 
 const CODE_LENGTH = 6;
+const CODE_TIMEOUT_SECONDS = 60;
 
-export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: initialError }) {
+export function createTwoFactorView({
+  onSubmit,
+  onRequestNew,
+  onBack,
+  error: initialError
+}) {
   const state = {
     digits: Array(CODE_LENGTH).fill(""),
     loading: false,
-    error: initialError ?? null
+    error: initialError ?? null,
+    isExpired: false,
+    secondsRemaining: CODE_TIMEOUT_SECONDS
+  };
+
+  let timerHandle = null;
+
+  const formatSeconds = (total) => {
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
   const header = createElement("div", { classes: ["two-factor-header"] });
@@ -54,11 +70,14 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
 
   function updateSubmitState() {
     const isComplete = state.digits.every((digit) => digit !== "");
-    submitButton.disabled = !isComplete || state.loading;
+    submitButton.disabled = !isComplete || state.loading || state.isExpired;
   }
 
   function handleInput(index, event) {
     const value = event.target.value.replace(/\D/g, "");
+    if (state.error) {
+      setError(null);
+    }
     if (!value) {
       state.digits[index] = "";
       event.target.value = "";
@@ -92,6 +111,9 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
     event.preventDefault();
     const text = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, CODE_LENGTH);
     if (!text) return;
+    if (state.error) {
+      setError(null);
+    }
     text.split("").forEach((char, index) => {
       state.digits[index] = char;
       inputs[index].value = char;
@@ -124,10 +146,20 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
   const submitButton = Button({ label: "Continue", type: "submit" });
   submitButton.disabled = true;
 
+  const resendPrimaryButton = Button({
+    label: "Get new",
+    type: "button",
+    onClick: () => {
+      if (state.loading) return;
+      onRequestNew?.();
+    }
+  });
+  resendPrimaryButton.style.display = "none";
+
   const errorMessage = createElement("p", {
     classes: ["two-factor-error"],
     text: state.error ?? "",
-    attrs: { style: state.error ? "text-align:center;" : "display:none;text-align:center;" }
+    attrs: { style: state.error ? "" : "display:none;" }
   });
 
   const infoMessage = createElement("p", {
@@ -136,7 +168,22 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
     attrs: { style: "display:none;" }
   });
 
-  form.append(grid, submitButton, errorMessage, infoMessage);
+  const timerMessage = createElement("p", {
+    classes: ["two-factor-info"],
+    attrs: { "data-variant": "muted", style: "display:none;" },
+    text: ""
+  });
+
+  const expiredMessage = createElement("p", {
+    classes: ["two-factor-expired-note"],
+    text: "Code expired. Request a new one.",
+    attrs: { style: "display:none;" }
+  });
+
+  const actions = createElement("div", { classes: ["two-factor-actions"] });
+  actions.append(submitButton, resendPrimaryButton);
+
+  form.append(grid, errorMessage, actions, infoMessage, expiredMessage, timerMessage);
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -146,27 +193,78 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
     onSubmit?.(state.digits.join(""));
   });
 
-  const footer = createElement("div", { classes: ["two-factor-footer"] });
-  const resendButton = Button({
-    label: "Get new",
-    variant: "link",
-    type: "button",
-    onClick: () => {
-      onRequestNew?.();
-    }
-  });
-  footer.appendChild(resendButton);
+  const shell = AuthShell({ header, body: [form] });
 
-  const shell = AuthShell({ header, body: [form], footer });
+  function toggleExpiredUI() {
+    if (state.isExpired) {
+      submitButton.style.display = "none";
+      resendPrimaryButton.style.display = "inline-flex";
+      expiredMessage.style.display = "block";
+      timerMessage.style.display = "none";
+    } else {
+      submitButton.style.display = "inline-flex";
+      resendPrimaryButton.style.display = "none";
+      expiredMessage.style.display = "none";
+      if (state.secondsRemaining < CODE_TIMEOUT_SECONDS) {
+        timerMessage.style.display = "block";
+      }
+    }
+
+    inputs.forEach((input) => {
+      input.disabled = state.loading || state.isExpired;
+    });
+
+    updateSubmitState();
+  }
+
+  function updateTimerMessage() {
+    if (state.isExpired) return;
+    if (state.secondsRemaining <= 0) {
+      timerMessage.style.display = "none";
+      return;
+    }
+    timerMessage.textContent = `Code expires in ${formatSeconds(state.secondsRemaining)}`;
+    timerMessage.style.display = "block";
+  }
+
+  function stopTimer() {
+    if (timerHandle) {
+      clearInterval(timerHandle);
+      timerHandle = null;
+    }
+  }
+
+  function setExpired(expired) {
+    state.isExpired = expired;
+    toggleExpiredUI();
+  }
+
+  function startTimer() {
+    stopTimer();
+    state.secondsRemaining = CODE_TIMEOUT_SECONDS;
+    setExpired(false);
+    updateTimerMessage();
+    timerHandle = setInterval(() => {
+      state.secondsRemaining -= 1;
+      if (state.secondsRemaining <= 0) {
+        stopTimer();
+        state.secondsRemaining = 0;
+        handleExpired();
+      } else {
+        updateTimerMessage();
+      }
+    }, 1000);
+  }
 
   function setLoading(isLoading) {
     state.loading = isLoading;
-    submitButton.disabled = isLoading || state.digits.some((digit) => digit === "");
+    submitButton.disabled =
+      isLoading || state.digits.some((digit) => digit === "") || state.isExpired;
     submitButton.textContent = isLoading ? "Verifying..." : "Continue";
     inputs.forEach((input) => {
-      input.disabled = isLoading;
+      input.disabled = isLoading || state.isExpired;
     });
-    resendButton.disabled = isLoading;
+    resendPrimaryButton.disabled = isLoading;
   }
 
   function setError(message) {
@@ -190,13 +288,36 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
     }
   }
 
-  function resetCode() {
+  function resetCode({ focus = true } = {}) {
     state.digits.fill("");
     inputs.forEach((input) => {
       input.value = "";
     });
     updateSubmitState();
-    inputs[0]?.focus();
+    if (focus) {
+      inputs[0]?.focus();
+    }
+  }
+
+  function handleExpired() {
+    stopTimer();
+    resetCode({ focus: false });
+    setError(null);
+    setInfo(null);
+    setExpired(true);
+  }
+
+  function refreshCycle() {
+    resetCode();
+    setError(null);
+    setInfo(null);
+    startTimer();
+  }
+
+  startTimer();
+
+  if (state.error) {
+    setError(state.error);
   }
 
   return {
@@ -205,6 +326,9 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
     setError,
     setInfo,
     resetCode,
-    focusFirst: () => inputs[0]?.focus()
+    focusFirst: () => inputs[0]?.focus(),
+    markExpired: handleExpired,
+    restartCycle: refreshCycle,
+    dispose: stopTimer
   };
 }

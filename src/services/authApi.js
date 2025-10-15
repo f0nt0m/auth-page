@@ -4,7 +4,10 @@ const MOCK_USER = {
   requiresTwoFactor: true
 };
 
-let activeCode = "133311";
+const CODE_TTL_MS = 60_000;
+
+let activeCode = "";
+let codeExpiresAt = 0;
 
 function simulateDelay(result, shouldReject = false, delay = 900) {
   return new Promise((resolve, reject) => {
@@ -16,6 +19,12 @@ function simulateDelay(result, shouldReject = false, delay = 900) {
       }
     }, delay);
   });
+}
+
+function issueNewCode() {
+  activeCode = String(Math.floor(100000 + Math.random() * 900000));
+  codeExpiresAt = Date.now() + CODE_TTL_MS;
+  return { code: activeCode, expiresAt: codeExpiresAt };
 }
 
 export function login({ email, password }) {
@@ -31,7 +40,11 @@ export function login({ email, password }) {
   }
 
   if (MOCK_USER.requiresTwoFactor) {
-    return simulateDelay({ requiresTwoFactor: true, email: MOCK_USER.email }, false);
+    const { expiresAt } = issueNewCode();
+    return simulateDelay(
+      { requiresTwoFactor: true, email: MOCK_USER.email, expiresAt },
+      false
+    );
   }
 
   return simulateDelay({ requiresTwoFactor: false, token: "mock-token" }, false);
@@ -42,14 +55,26 @@ export function verifyTwoFactor(code) {
     return simulateDelay(new Error("Enter the full 6-digit code."), true, 500);
   }
 
+  if (!activeCode || Date.now() > codeExpiresAt) {
+    const error = new Error("Code expired. Request a new one.");
+    error.code = "CODE_EXPIRED";
+    return simulateDelay(error, true, 500);
+  }
+
   if (code !== activeCode) {
-    return simulateDelay(new Error("Invalid code. Try again."), true, 700);
+    const error = new Error("Invalid code. Try again." );
+    error.code = "CODE_INVALID";
+    return simulateDelay(error, true, 700);
   }
 
   return simulateDelay({ success: true, token: "mock-session-token" }, false, 800);
 }
 
 export function requestNewCode() {
-  activeCode = String(Math.floor(100000 + Math.random() * 900000));
-  return simulateDelay({ code: activeCode }, false, 650);
+  const details = issueNewCode();
+  return simulateDelay(details, false, 650);
+}
+
+export function getActiveCode() {
+  return { code: activeCode, expiresAt: codeExpiresAt };
 }

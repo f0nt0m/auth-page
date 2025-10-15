@@ -15,6 +15,10 @@ function mount(view) {
 }
 
 function showLogin(initialEmail = "") {
+  if (twoFactorView) {
+    twoFactorView.dispose?.();
+    twoFactorView = null;
+  }
   loginView = createLoginView({
     initialEmail,
     onSubmit: handleLogin
@@ -40,6 +44,9 @@ async function handleLogin({ email, password }) {
 }
 
 function showTwoFactor(email) {
+  if (twoFactorView) {
+    twoFactorView.dispose?.();
+  }
   twoFactorView = createTwoFactorView({
     onSubmit: handleVerifyCode,
     onRequestNew: handleRequestNewCode,
@@ -47,18 +54,23 @@ function showTwoFactor(email) {
   });
   mount(twoFactorView);
   twoFactorView.focusFirst();
+  logActiveCode("Initial");
 }
 
 async function handleVerifyCode(code) {
   twoFactorView.setLoading(true);
   twoFactorView.setError(null);
   try {
+    console.info("Submitting 2FA code", code);
     await authApi.verifyTwoFactor(code);
     showSuccess();
   } catch (error) {
     twoFactorView.setError(error.message ?? "Unable to verify the code.");
-    twoFactorView.resetCode();
-    twoFactorView.focusFirst();
+    if (error.code === "CODE_EXPIRED") {
+      twoFactorView.markExpired();
+    } else {
+      twoFactorView.resetCode();
+    }
   } finally {
     twoFactorView.setLoading(false);
   }
@@ -68,11 +80,10 @@ async function handleRequestNewCode() {
   twoFactorView.setLoading(true);
   twoFactorView.setError(null);
   try {
-    const { code } = await authApi.requestNewCode();
-    twoFactorView.resetCode();
-    twoFactorView.setInfo(`New code generated: ${code}`);
-    console.info("Mock 2FA code:", code);
-    twoFactorView.focusFirst();
+    await authApi.requestNewCode();
+    twoFactorView.restartCycle();
+    twoFactorView.setInfo("A new code has been sent to your authenticator.");
+    logActiveCode("Resent");
   } catch (error) {
     twoFactorView.setError(error.message ?? "Unable to request a new code.");
   } finally {
@@ -81,8 +92,20 @@ async function handleRequestNewCode() {
 }
 
 function showSuccess() {
+  if (twoFactorView) {
+    twoFactorView.dispose?.();
+    twoFactorView = null;
+  }
   const successView = createSuccessView({ onRestart: () => showLogin() });
   mount(successView);
+}
+
+function logActiveCode(context) {
+  const { code, expiresAt } = authApi.getActiveCode();
+  if (code) {
+    const expiresIn = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+    console.info(`[${context}] 2FA code: ${code} (expires in ${expiresIn}s)`);
+  }
 }
 
 showLogin();
