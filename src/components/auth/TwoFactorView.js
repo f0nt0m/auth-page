@@ -12,6 +12,12 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack }) {
     error: null
   };
 
+  // Cooldown duration (in seconds) before the "Get new" button can be used again.
+  // Adjust this value to change how long users must wait before requesting another code.
+  const RESEND_COOLDOWN_SECONDS = 30;
+  let resendCountdown = 0;
+  let countdownIntervalId = null;
+
   const header = createElement("div");
 
   if (onBack) {
@@ -138,15 +144,45 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack }) {
   });
 
   const footer = createElement("div", { attrs: { style: "text-align:center;" } });
+  // Create the "Get new" button without an immediate click handler.
   const resendButton = Button({
     label: "Get new",
     variant: "ghost",
-    type: "button",
-    onClick: () => {
-      clearError();
-      resetCode();
-      onRequestNew?.();
+    type: "button"
+  });
+  // Helper to start the cooldown timer and update the button text/disabled state.
+  function startResendTimer() {
+    // Reset any existing timer
+    if (countdownIntervalId) {
+      clearInterval(countdownIntervalId);
     }
+    resendCountdown = RESEND_COOLDOWN_SECONDS;
+    // Disable the button during countdown
+    resendButton.disabled = true;
+    resendButton.textContent = `Get new (${resendCountdown})`;
+    countdownIntervalId = setInterval(() => {
+      resendCountdown -= 1;
+      if (resendCountdown <= 0) {
+        clearInterval(countdownIntervalId);
+        countdownIntervalId = null;
+        // Re-enable the button and restore its label
+        resendButton.disabled = false;
+        resendButton.textContent = "Get new";
+      } else {
+        // Update the label to show remaining seconds
+        resendButton.textContent = `Get new (${resendCountdown})`;
+      }
+    }, 1000);
+  }
+  // Attach click handler manually so that we can control when requests are allowed.
+  resendButton.addEventListener("click", () => {
+    // Ignore clicks if the button is disabled
+    if (resendButton.disabled) return;
+    clearError();
+    resetCode();
+    onRequestNew?.();
+    // Restart the cooldown after a new code is requested
+    startResendTimer();
   });
   footer.appendChild(resendButton);
 
@@ -159,7 +195,13 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack }) {
     inputs.forEach((input) => {
       input.disabled = isLoading;
     });
-    resendButton.disabled = isLoading;
+    // Only disable the resend button during loading if it isn't already disabled.
+    if (isLoading) {
+      resendButton.disabled = true;
+    } else if (resendCountdown <= 0) {
+      // Re-enable the button if cooldown has finished
+      resendButton.disabled = false;
+    }
   }
 
   function setError(message) {
@@ -188,6 +230,10 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack }) {
     updateSubmitState();
     inputs[0]?.focus();
   }
+
+  // Initialize the resend timer when the view is first created.
+  // This prevents immediate repeated requests for new codes until the cooldown expires.
+  startResendTimer();
 
   return {
     element: shell,
