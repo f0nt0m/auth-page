@@ -5,11 +5,11 @@ import { createElement } from "../../utils/dom.js";
 
 const CODE_LENGTH = 6;
 
-export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: initialError }) {
+export function createTwoFactorView({ onSubmit, onRequestNew, onBack }) {
   const state = {
     digits: Array(CODE_LENGTH).fill(""),
     loading: false,
-    error: initialError ?? null
+    error: null
   };
 
   const header = createElement("div");
@@ -29,10 +29,10 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
   }
 
   header.appendChild(
-    AuthHeader({
-      title: "Two-Factor Authentication",
-      subtitle: "Enter the 6-digit code from the Google Authenticator app"
-    })
+      AuthHeader({
+        title: "Two-Factor Authentication",
+        subtitle: "Enter the 6-digit code from the Google Authenticator app"
+      })
   );
 
   const form = createElement("form");
@@ -102,7 +102,7 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
 
   for (let index = 0; index < CODE_LENGTH; index += 1) {
     const input = createElement("input", {
-      classes: ["two-factor-input", state.error ? "error" : ""].filter(Boolean),
+      classes: ["two-factor-input"],
       attrs: {
         inputMode: "numeric",
         maxLength: 1,
@@ -124,32 +124,27 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
 
   const errorMessage = createElement("p", {
     classes: ["two-factor-error"],
-    text: state.error ?? "",
-    attrs: { style: state.error ? "text-align:center;" : "display:none;text-align:center;" }
-  });
-
-  const infoMessage = createElement("p", {
-    classes: ["auth-shell__subtitle"],
     text: "",
-    attrs: { style: "display:none;text-align:center;color:#1d4ed8;" }
+    attrs: { style: "display:none;" }
   });
 
-  form.append(grid, submitButton, errorMessage, infoMessage);
+  form.append(grid, errorMessage, submitButton);
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (state.loading || submitButton.disabled) return;
-    errorMessage.style.display = "none";
-    infoMessage.style.display = "none";
+    clearError();
     onSubmit?.(state.digits.join(""));
   });
 
-  const footer = createElement("div", { style: "text-align:center;" });
+  const footer = createElement("div", { attrs: { style: "text-align:center;" } });
   const resendButton = Button({
     label: "Get new",
     variant: "ghost",
     type: "button",
     onClick: () => {
+      clearError();
+      resetCode();
       onRequestNew?.();
     }
   });
@@ -164,6 +159,7 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
     inputs.forEach((input) => {
       input.disabled = isLoading;
     });
+    resendButton.disabled = isLoading;
   }
 
   function setError(message) {
@@ -173,24 +169,21 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
       errorMessage.style.display = "block";
       inputs.forEach((input) => input.classList.add("error"));
     } else {
-      errorMessage.style.display = "none";
-      inputs.forEach((input) => input.classList.remove("error"));
+      clearError();
     }
   }
 
-  function setInfo(message) {
-    if (message) {
-      infoMessage.textContent = message;
-      infoMessage.style.display = "block";
-    } else {
-      infoMessage.style.display = "none";
-    }
+  function clearError() {
+    state.error = null;
+    errorMessage.style.display = "none";
+    inputs.forEach((input) => input.classList.remove("error"));
   }
 
   function resetCode() {
     state.digits.fill("");
     inputs.forEach((input) => {
       input.value = "";
+      input.classList.remove("error");
     });
     updateSubmitState();
     inputs[0]?.focus();
@@ -200,7 +193,6 @@ export function createTwoFactorView({ onSubmit, onRequestNew, onBack, error: ini
     element: shell,
     setLoading,
     setError,
-    setInfo,
     resetCode,
     focusFirst: () => inputs[0]?.focus()
   };

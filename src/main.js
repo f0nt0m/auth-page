@@ -8,6 +8,7 @@ const appRoot = document.getElementById("app");
 
 let loginView = null;
 let twoFactorView = null;
+let userEmail = "";
 
 function mount(view) {
   clearChildren(appRoot);
@@ -28,7 +29,8 @@ async function handleLogin({ email, password }) {
   try {
     const response = await authApi.login({ email, password });
     if (response.requiresTwoFactor) {
-      showTwoFactor(response.email);
+      userEmail = response.email;
+      showTwoFactor();
     } else {
       showSuccess();
     }
@@ -39,11 +41,11 @@ async function handleLogin({ email, password }) {
   }
 }
 
-function showTwoFactor(email) {
+function showTwoFactor() {
   twoFactorView = createTwoFactorView({
     onSubmit: handleVerifyCode,
     onRequestNew: handleRequestNewCode,
-    onBack: () => showLogin(email)
+    onBack: () => showLogin(userEmail)
   });
   mount(twoFactorView);
   twoFactorView.focusFirst();
@@ -51,12 +53,11 @@ function showTwoFactor(email) {
 
 async function handleVerifyCode(code) {
   twoFactorView.setLoading(true);
-  twoFactorView.setError(null);
   try {
     await authApi.verifyTwoFactor(code);
     showSuccess();
   } catch (error) {
-    twoFactorView.setError(error.message ?? "Unable to verify the code.");
+    twoFactorView.setError(error.message ?? "Invalid code");
     twoFactorView.resetCode();
     twoFactorView.focusFirst();
   } finally {
@@ -66,12 +67,10 @@ async function handleVerifyCode(code) {
 
 async function handleRequestNewCode() {
   twoFactorView.setLoading(true);
-  twoFactorView.setError(null);
   try {
     const { code } = await authApi.requestNewCode();
+    console.info("New 2FA code:", code);
     twoFactorView.resetCode();
-    twoFactorView.setInfo(`New code generated: ${code}`);
-    console.info("Mock 2FA code:", code);
     twoFactorView.focusFirst();
   } catch (error) {
     twoFactorView.setError(error.message ?? "Unable to request a new code.");
@@ -81,7 +80,12 @@ async function handleRequestNewCode() {
 }
 
 function showSuccess() {
-  const successView = createSuccessView({ onRestart: () => showLogin() });
+  const successView = createSuccessView({
+    onRestart: () => {
+      userEmail = "";
+      showLogin();
+    }
+  });
   mount(successView);
 }
 
